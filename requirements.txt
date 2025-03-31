@@ -3,3 +3,4 @@ pandas
 openpyxl # Needed by pandas to read .xlsx files 
 rapidfuzz
 bs4
+tqdm
