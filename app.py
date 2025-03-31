@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io
 # Import necessary functions from hoa_processing
 from hoa_processing import (
     load_and_process_hoa_data,
@@ -11,11 +12,6 @@ from match_analyzer import MatchAnalyzer,MatchFlags
 
 # --- Configuration ---
 st.set_page_config(layout="wide") # Use wide layout for better table display
-
-# --- File Paths ---
-# Assuming the files are in the same directory as app.py
-HOA_CSV_PATH = "hoa.csv"
-EXCEL_PATH = "HIOA Owners List March 2024.xlsx"
 
 # --- Initialize Session State ---
 # Used to store matching results and highlight status across reruns
@@ -29,34 +25,85 @@ if 'matched_hoa_keys' not in st.session_state:
     st.session_state.matched_hoa_keys = set()
 if 'matched_excel_keys' not in st.session_state:
     st.session_state.matched_excel_keys = set()
+if 'hoa_data' not in st.session_state:
+    st.session_state.hoa_data = None
+if 'excel_data' not in st.session_state:
+    st.session_state.excel_data = None
 
+# --- Data Loading Functions ---
+def load_data_from_secrets():
+    """Attempt to load data from Streamlit secrets."""
+    try:
+        if 'hoa_csv' in st.secrets and 'excel_file' in st.secrets:
+            hoa_data = pd.read_csv(io.StringIO(st.secrets['hoa_csv']))
+            excel_data = pd.read_excel(io.BytesIO(st.secrets['excel_file'].encode()))
+            return hoa_data, excel_data
+    except Exception as e:
+        st.warning("Could not load data from secrets.")
+        return None, None
+    return None, None
+
+def load_data_from_files():
+    """Load data from local files if they exist."""
+    try:
+        hoa_data = pd.read_csv("hoa.csv")
+        excel_data = pd.read_excel("HIOA Owners List March 2024.xlsx")
+        return hoa_data, excel_data
+    except Exception:
+        return None, None
 
 # --- Load Data ---
-# Cache the data loading to avoid reloading on every interaction
 @st.cache_data
-def load_data(hoa_path, excel_path):
-    """Loads and processes data, returning original dataframes."""
+def process_data(hoa_df, excel_df):
+    """Process the loaded dataframes."""
     try:
-        # Load and process both datasets using functions from hoa_processing
-        # These dataframes have original data types (important for matching)
-        hoa_df_orig = load_and_process_hoa_data(hoa_path)
-        excel_df_orig = load_and_process_excel_data(excel_path)
-        return hoa_df_orig, excel_df_orig
-    except FileNotFoundError as e:
-        st.error(f"Error loading data: {e}. Make sure '{hoa_path}' and '{excel_path}' are in the same directory as the app.")
-        return None, None
+        hoa_df_processed = load_and_process_hoa_data(hoa_df)
+        excel_df_processed = load_and_process_excel_data(excel_df)
+        return hoa_df_processed, excel_df_processed
     except Exception as e:
         st.error(f"Error processing data: {str(e)}")
         return None, None
 
 st.title("HOA Record Matching")
 
-# Load original data
-hoa_df_orig, excel_df_orig = load_data(HOA_CSV_PATH, EXCEL_PATH)
+# Data Loading Section
+if st.session_state.hoa_data is None or st.session_state.excel_data is None:
+    st.header("Load Data")
+    
+    # Try loading from secrets first
+    hoa_df, excel_df = load_data_from_secrets()
+    
+    # If secrets didn't work, try local files
+    if hoa_df is None or excel_df is None:
+        hoa_df, excel_df = load_data_from_files()
+    
+    # If neither worked, show file upload
+    if hoa_df is None or excel_df is None:
+        col1, col2 = st.columns(2)
+        with col1:
+            hoa_upload = st.file_uploader("Upload HOA CSV file", type=['csv'])
+            if hoa_upload is not None:
+                hoa_df = pd.read_csv(hoa_upload)
+        
+        with col2:
+            excel_upload = st.file_uploader("Upload Excel file", type=['xlsx'])
+            if excel_upload is not None:
+                excel_df = pd.read_excel(excel_upload)
+    
+    # If we have both files, process them
+    if hoa_df is not None and excel_df is not None:
+        hoa_df_orig, excel_df_orig = process_data(hoa_df, excel_df)
+        if hoa_df_orig is not None and excel_df_orig is not None:
+            st.session_state.hoa_data = hoa_df_orig
+            st.session_state.excel_data = excel_df_orig
+            st.success("Data loaded successfully!")
+            st.rerun()
+    else:
+        st.stop()
 
-# Stop execution if files weren't loaded successfully
-if hoa_df_orig is None or excel_df_orig is None:
-    st.stop()
+# Use the loaded data
+hoa_df_orig = st.session_state.hoa_data
+excel_df_orig = st.session_state.excel_data
 
 # --- Data Preparation for Display/Search ---
 # Create string versions for display and searching

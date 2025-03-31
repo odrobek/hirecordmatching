@@ -1,2 +1,3 @@
 hoa.csv
-*.xlsx
+*.xlsx.
+.streamlit/secrets.toml
