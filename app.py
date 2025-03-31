@@ -3,10 +3,10 @@ import pandas as pd
 import io
 # Import necessary functions from hoa_processing
 from hoa_processing import (
-    load_and_process_hoa_data,
-    load_and_process_excel_data,
+    process_hoa_dataframe,
+    process_excel_dataframe,
     match_records,
-    analyze_matches # Added analyze_matches
+    analyze_matches
 )
 from match_analyzer import MatchAnalyzer,MatchFlags
 
@@ -57,8 +57,8 @@ def load_data_from_files():
 def process_data(hoa_df, excel_df):
     """Process the loaded dataframes."""
     try:
-        hoa_df_processed = load_and_process_hoa_data(hoa_df)
-        excel_df_processed = load_and_process_excel_data(excel_df)
+        hoa_df_processed = process_hoa_dataframe(hoa_df)
+        excel_df_processed = process_excel_dataframe(excel_df)
         return hoa_df_processed, excel_df_processed
     except Exception as e:
         st.error(f"Error processing data: {str(e)}")
@@ -83,27 +83,51 @@ if st.session_state.hoa_data is None or st.session_state.excel_data is None:
         with col1:
             hoa_upload = st.file_uploader("Upload HOA CSV file", type=['csv'])
             if hoa_upload is not None:
-                hoa_df = pd.read_csv(hoa_upload)
+                try:
+                    hoa_df = pd.read_csv(hoa_upload)
+                except Exception as e:
+                    st.error(f"Error reading HOA CSV file: {str(e)}")
+                    hoa_df = None
         
         with col2:
             excel_upload = st.file_uploader("Upload Excel file", type=['xlsx'])
             if excel_upload is not None:
-                excel_df = pd.read_excel(excel_upload)
+                try:
+                    excel_df = pd.read_excel(excel_upload)
+                except Exception as e:
+                    st.error(f"Error reading Excel file: {str(e)}")
+                    excel_df = None
     
     # If we have both files, process them
     if hoa_df is not None and excel_df is not None:
-        hoa_df_orig, excel_df_orig = process_data(hoa_df, excel_df)
-        if hoa_df_orig is not None and excel_df_orig is not None:
-            st.session_state.hoa_data = hoa_df_orig
-            st.session_state.excel_data = excel_df_orig
-            st.success("Data loaded successfully!")
-            st.rerun()
+        try:
+            # Process the dataframes using the new functions
+            hoa_df_orig = process_hoa_dataframe(hoa_df)
+            excel_df_orig = process_excel_dataframe(excel_df)
+            
+            if hoa_df_orig is not None and excel_df_orig is not None:
+                st.session_state.hoa_data = hoa_df_orig
+                st.session_state.excel_data = excel_df_orig
+                st.success("Data loaded successfully!")
+                st.rerun()
+            else:
+                st.error("Error processing the uploaded files. Please check the file format and contents.")
+                st.stop()
+        except Exception as e:
+            st.error(f"Error processing files: {str(e)}")
+            st.stop()
     else:
+        st.warning("Please upload both HOA CSV and Excel files to continue.")
         st.stop()
 
 # Use the loaded data
 hoa_df_orig = st.session_state.hoa_data
 excel_df_orig = st.session_state.excel_data
+
+# Validate data before proceeding
+if hoa_df_orig is None or excel_df_orig is None:
+    st.error("Data not properly loaded. Please refresh the page and try uploading the files again.")
+    st.stop()
 
 # --- Data Preparation for Display/Search ---
 # Create string versions for display and searching

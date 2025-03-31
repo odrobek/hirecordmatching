@@ -485,19 +485,16 @@ No Matches: {no_matches} ({no_matches/total_records*100:.1f}%)
     # Return the analysis text
     return analysis_text
 
-def load_and_process_hoa_data(csv_path):
+def process_hoa_dataframe(df):
     """
-    Load HOA data from CSV, condense records, clean, and sort.
+    Process an already loaded HOA DataFrame.
     
     Args:
-        csv_path (str): Path to the HOA CSV file
+        df (pd.DataFrame): The loaded HOA DataFrame
         
     Returns:
         pd.DataFrame: Processed HOA data
     """
-    # Load the CSV
-    df = pd.read_csv(csv_path)
-    
     # Condense the records
     df = condense_records(df)
     
@@ -515,19 +512,16 @@ def load_and_process_hoa_data(csv_path):
     
     return df
 
-def load_and_process_excel_data(excel_path):
+def process_excel_dataframe(df):
     """
-    Load Excel data, clean, and sort.
+    Process an already loaded Excel DataFrame.
     
     Args:
-        excel_path (str): Path to the Excel file
+        df (pd.DataFrame): The loaded Excel DataFrame
         
     Returns:
         pd.DataFrame: Processed Excel data
     """
-    # Load the Excel file
-    df = pd.read_excel(excel_path)
-    
     # Remove rows with no last name
     df = df.dropna(subset=['Last Name'])
     
@@ -541,4 +535,32 @@ def load_and_process_excel_data(excel_path):
     # Sort and reset index
     df = df.sort_values('First Name').reset_index(drop=True)
     
-    return df 
+    return df
+
+def load_and_process_hoa_data(csv_path):
+    """
+    Load HOA data from CSV, condense records, clean, and sort.
+    
+    Args:
+        csv_path (str): Path to the HOA CSV file
+        
+    Returns:
+        pd.DataFrame: Processed HOA data
+    """
+    # Load the CSV
+    df = pd.read_csv(csv_path)
+    return process_hoa_dataframe(df)
+
+def load_and_process_excel_data(excel_path):
+    """
+    Load Excel data, clean, and sort.
+    
+    Args:
+        excel_path (str): Path to the Excel file
+        
+    Returns:
+        pd.DataFrame: Processed Excel data
+    """
+    # Load the Excel file
+    df = pd.read_excel(excel_path)
+    return process_excel_dataframe(df) 
