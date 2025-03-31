@@ -4,7 +4,7 @@ import time
 from bs4 import BeautifulSoup
 import pandas as pd
 from tqdm import tqdm
-from rapidfuzz import fuzz
+from match_analyzer import  MatchAnalyzer, MatchFlags
 
 def is_likely_company(name):
     """Check if a name appears to be a company name"""
@@ -319,170 +319,171 @@ def get_initial_data():
     
     return all_data, headers, cookies 
 
-def normalize_address(address):
-    """Normalize address string for better matching"""
-    if not isinstance(address, str):
-        return ""
-    
-    # Convert to lowercase
-    address = address.lower()
-    
-    # Standardize common abbreviations
-    replacements = {
-        'street': 'st',
-        'avenue': 'ave',
-        'boulevard': 'blvd',
-        'drive': 'dr',
-        'road': 'rd',
-        'lane': 'ln',
-        'court': 'ct',
-        'circle': 'cir',
-        'place': 'pl',
-        'north': 'n',
-        'south': 's',
-        'east': 'e',
-        'west': 'w',
-        'northeast': 'ne',
-        'northwest': 'nw',
-        'southeast': 'se',
-        'southwest': 'sw'
-    }
-    
-    for full, abbrev in replacements.items():
-        address = address.replace(full, abbrev)
-    
-    # Remove special characters and extra spaces
-    address = ''.join(c for c in address if c.isalnum() or c.isspace())
-    address = ' '.join(address.split())
-    
-    return address
-
-def calculate_match_score(excel_record, hoa_record):
-    """Calculate weighted match score between two records"""
-    score = 0
-    match_details = {
-        'email_match': False,
-        'last_name_match': False,
-        'address_match': False
-    }
-    
-    # Email matching (case sensitive, exact match)
-    if excel_record['Email'] and hoa_record['Email']:
-        # Convert HOA email to list if it's not already
-        hoa_emails = hoa_record['Email'] if isinstance(hoa_record['Email'], list) else [hoa_record['Email']]
-        excel_email = excel_record['Email']
-        
-        # Check if any email matches
-        if any(excel_email == hoa_email for hoa_email in hoa_emails):
-            score += 50
-            match_details['email_match'] = True
-    
-    # Last name matching (fuzzy)
-    if excel_record['Last Name'] and hoa_record['Last Name']:
-        try:
-            last_name_ratio = fuzz.ratio(excel_record['Last Name'].lower(), hoa_record['Last Name'].lower())
-            if last_name_ratio >= 90:
-                score += 35
-                match_details['last_name_match'] = True
-        except:
-            print(f"Error: {excel_record['Last Name']} {hoa_record['Last Name']}")
-    
-    # Address matching (fuzzy)
-    # Construct full mailing address for Excel record
-    excel_full_addr = f"{excel_record['Street']}\n{excel_record['City']}, {excel_record['StateZip']}"
-    if excel_full_addr and hoa_record['Full Mailing Address']:
-        excel_addr = normalize_address(excel_full_addr)
-        hoa_addr = normalize_address(hoa_record['Full Mailing Address'])
-        addr_ratio = fuzz.ratio(excel_addr, hoa_addr)
-        if addr_ratio >= 90:
-            score += 15
-            match_details['address_match'] = True
-    
-    return score, match_details
-
 def match_records(excel_df, hoa_df):
     """
     Match records between Excel and HOA dataframes
-    Returns a DataFrame with matched records and their scores
+    Returns a DataFrame with matched records, their scores, and flags.
+    Unmatched records (score < 50) will be placed in separate rows with empty fields for the unmatched side.
     """
-    # Create a copy of the Excel DataFrame to store results
-    results = []
-    matched_hoa_indices = set()  # Keep track of matched HOA records
-    
-    # Sort HOA records by number of unique people (prefer single-person records)
-    hoa_df = hoa_df.sort_values('Number of Unique People')
-    
-    for idx, excel_record in excel_df.iterrows():
-        best_match = None
-        best_score = 0
-        best_match_details = None
+    try:
+        # Create a copy of the Excel DataFrame to store results
+        results = []
+        matched_hoa_indices = set()  # Keep track of matched HOA records
+        matched_excel_indices = set()  # Keep track of matched Excel records
+        analyzer = MatchAnalyzer()  # Create a single analyzer instance
         
-        for hoa_idx, hoa_record in hoa_df.iterrows():
-            if hoa_idx in matched_hoa_indices:
-                continue
+        # Sort HOA records by number of unique people (prefer single-person records)
+        hoa_df = hoa_df.sort_values('Number of Unique People')
+        
+        # First pass: Find all good matches (score >= 50)
+        for idx, excel_record in excel_df.iterrows():
+            try:
+                best_match = None
+                best_score = 0
+                best_match_details = None
+                best_flags = None
+                best_hoa_idx = None
                 
-            score, match_details = calculate_match_score(excel_record, hoa_record)
-            
-            if score > best_score:
-                best_score = score
-                best_match = hoa_record
-                best_match_details = match_details
+                for hoa_idx, hoa_record in hoa_df.iterrows():
+                    if hoa_idx in matched_hoa_indices:
+                        continue
+                    
+                    try:
+                        print(f"Comparing records:")
+                        print(f"Excel: {excel_record['First Name']} {excel_record['Last Name']}")
+                        print(f"HOA: {hoa_record['First Name']} {hoa_record['Last Name']}")
+                        
+                        score, match_details, flags = analyzer.calculate_match_score(dict(excel_record), dict(hoa_record))
+                        
+                        if score > best_score:
+                            best_score = score
+                            best_match = hoa_record
+                            best_match_details = match_details
+                            best_flags = flags
+                            best_hoa_idx = hoa_idx
+                            
+                    except Exception as e:
+                        print(f"Error comparing records:")
+                        print(f"Excel Record: {excel_record['First Name']} {excel_record['Last Name']}")
+                        print(f"HOA Record: {hoa_record['First Name']} {hoa_record['Last Name']}")
+                        print(f"Error: {str(e)}")
+                        continue
+                
+                # Only create a matched record if the score is >= 50
+                if best_score >= 50 and best_match is not None:
+                    result = {
+                        'Excel_First_Name': excel_record['First Name'],
+                        'Excel_Last_Name': excel_record['Last Name'],
+                        'Excel_Email': excel_record['Email'],
+                        'Excel_Street': excel_record.get('Street', ''),
+                        'Excel_City': excel_record.get('City', ''),
+                        'Excel_StateZip': excel_record.get('StateZip', ''),
+                        'HOA_First_Name': best_match['First Name'],
+                        'HOA_Last_Name': best_match['Last Name'],
+                        'HOA_Email': best_match['Email'],
+                        'HOA_Street': best_match['Mailing Street'],
+                        'HOA_City': best_match['Mailing City'],
+                        'HOA_StateZip': best_match['Mailing StateZip'],
+                        'Match_Score': best_score,
+                        'Email_Match': best_match_details['email_match'],
+                        'Last_Name_Match': best_match_details['last_name_match'],
+                        'Address_Match': best_match_details['address_match'],
+                        'Match_Type': 'Exact' if best_score >= 100 else 'Fuzzy',
+                        'Match_Flags': [flag.name for flag in best_flags]
+                    }
+                    results.append(result)
+                    matched_excel_indices.add(idx)
+                    matched_hoa_indices.add(best_hoa_idx)
+                    print(f"Matched {excel_record['First Name']} {excel_record['Last Name']} with {best_match['First Name']} {best_match['Last Name']}")
+                    
+            except Exception as e:
+                print(f"Error processing Excel record:")
+                print(f"Record: {excel_record['First Name']} {excel_record['Last Name']}")
+                print(f"Error: {str(e)}")
+                continue
         
-        # Create result record
-        result = {
-            'Excel_First_Name': excel_record['First Name'],
-            'Excel_Last_Name': excel_record['Last Name'],
-            'Excel_Email': excel_record['Email'],
-            'Excel_Street': excel_record['Street'],
-            'Excel_City': excel_record['City'],
-            'Excel_StateZip': excel_record['StateZip'],
-            'HOA_First_Name': best_match['First Name'] if best_match is not None else None,
-            'HOA_Last_Name': best_match['Last Name'] if best_match is not None else None,
-            'HOA_Email': best_match['Email'] if best_match is not None else None,
-            'HOA_Street': best_match['Mailing Street'] if best_match is not None else None,
-            'HOA_City': best_match['Mailing City'] if best_match is not None else None,
-            'HOA_StateZip': best_match['Mailing StateZip'] if best_match is not None else None,
-            'Match_Score': best_score,
-            'Email_Match': best_match_details['email_match'] if best_match_details is not None else False,
-            'Last_Name_Match': best_match_details['last_name_match'] if best_match_details is not None else False,
-            'Address_Match': best_match_details['address_match'] if best_match_details is not None else False,
-            'Match_Type': 'Exact' if best_score >= 100 else 'Fuzzy' if best_score >= 50 else 'No Match'
-        }
+        # Add unmatched Excel records
+        for idx, excel_record in excel_df.iterrows():
+            if idx not in matched_excel_indices:
+                result = {
+                    'Excel_First_Name': excel_record['First Name'],
+                    'Excel_Last_Name': excel_record['Last Name'],
+                    'Excel_Email': excel_record['Email'],
+                    'Excel_Street': excel_record.get('Street', ''),
+                    'Excel_City': excel_record.get('City', ''),
+                    'Excel_StateZip': excel_record.get('StateZip', ''),
+                    'HOA_First_Name': None,
+                    'HOA_Last_Name': None,
+                    'HOA_Email': None,
+                    'HOA_Street': None,
+                    'HOA_City': None,
+                    'HOA_StateZip': None,
+                    'Match_Score': 0,
+                    'Email_Match': False,
+                    'Last_Name_Match': False,
+                    'Address_Match': False,
+                    'Match_Type': 'No Match',
+                    'Match_Flags': ['RECORD_REMOVED']
+                }
+                results.append(result)
         
-        results.append(result)
+        # Add unmatched HOA records
+        for idx, hoa_record in hoa_df.iterrows():
+            if idx not in matched_hoa_indices:
+                result = {
+                    'Excel_First_Name': None,
+                    'Excel_Last_Name': None,
+                    'Excel_Email': None,
+                    'Excel_Street': None,
+                    'Excel_City': None,
+                    'Excel_StateZip': None,
+                    'HOA_First_Name': hoa_record['First Name'],
+                    'HOA_Last_Name': hoa_record['Last Name'],
+                    'HOA_Email': hoa_record['Email'],
+                    'HOA_Street': hoa_record['Mailing Street'],
+                    'HOA_City': hoa_record['Mailing City'],
+                    'HOA_StateZip': hoa_record['Mailing StateZip'],
+                    'Match_Score': 0,
+                    'Email_Match': False,
+                    'Last_Name_Match': False,
+                    'Address_Match': False,
+                    'Match_Type': 'No Match',
+                    'Match_Flags': ['NEW_RECORD']
+                }
+                results.append(result)
         
-        # If we found a good match, mark the HOA record as matched
-        if best_score >= 50:
-            print(f"Matched {excel_record['First Name']} {excel_record['Last Name']} with {best_match['First Name']} {best_match['Last Name']}")
-            matched_hoa_indices.add(hoa_idx)
-    
-    # Create DataFrame from results
-    results_df = pd.DataFrame(results)
-    
-    # Sort by match score and match type
-    results_df = results_df.sort_values(['Match_Score', 'Match_Type'], ascending=[False, True])
-    
-    return results_df
+        # Create DataFrame from results
+        results_df = pd.DataFrame(results)
+        
+        # Sort by match score (descending) and match type
+        results_df = results_df.sort_values(['Match_Score', 'Match_Type'], ascending=[False, True])
+        
+        return results_df
+        
+    except Exception as e:
+        print("Error in match_records:")
+        print(f"Error: {str(e)}")
+        raise
 
 def analyze_matches(match_df):
-    """Analyze the matching results and provide summary statistics"""
+    """Analyze the matching results and return summary statistics"""
     total_records = len(match_df)
+    if total_records == 0:
+        return "No records to analyze." # Handle empty df case
+
     exact_matches = len(match_df[match_df['Match_Type'] == 'Exact'])
     fuzzy_matches = len(match_df[match_df['Match_Type'] == 'Fuzzy'])
     no_matches = len(match_df[match_df['Match_Type'] == 'No Match'])
-    
-    print(f"\nMatching Analysis:")
-    print(f"Total Records: {total_records}")
-    print(f"Exact Matches: {exact_matches} ({exact_matches/total_records*100:.1f}%)")
-    print(f"Fuzzy Matches: {fuzzy_matches} ({fuzzy_matches/total_records*100:.1f}%)")
-    print(f"No Matches: {no_matches} ({no_matches/total_records*100:.1f}%)")
-    
-    return {
-        'total_records': total_records,
-        'exact_matches': exact_matches,
-        'fuzzy_matches': fuzzy_matches,
-        'no_matches': no_matches
-    }
+
+    analysis_text = f"""
+Matching Analysis:
+Total Records: {total_records}
+Exact Matches: {exact_matches} ({exact_matches/total_records*100:.1f}%)
+Fuzzy Matches: {fuzzy_matches} ({fuzzy_matches/total_records*100:.1f}%)
+No Matches: {no_matches} ({no_matches/total_records*100:.1f}%)
+"""
+    # Return the analysis text
+    return analysis_text
 
 def load_and_process_hoa_data(csv_path):
     """
